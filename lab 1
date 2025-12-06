@@ -1,293 +1,686 @@
-from datetime import datetime
+import json
+import xml.etree.ElementTree as ET
+import pickle
+from abc import ABC, abstractmethod
 from enum import Enum
-from typing import List, Optional
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
+import xml.dom.minidom as minidom
 
+# ========== ENUMS ==========
 class BookGenre(Enum):
-    FICTION = "Художественная литература"
-    SCIENCE = "Научная литература"
-    BUSINESS = "Бизнес"
-    TECHNOLOGY = "Технологии"
-    SELF_HELP = "Саморазвитие"
-    EDUCATION = "Образование"
+    FICTION = "Fiction"
+    SCIENCE = "Science"
+    BUSINESS = "Business"
+    FANTASY = "Fantasy"
+    BIOGRAPHY = "Biography"
+    HISTORY = "History"
+    TECHNOLOGY = "Technology"
+    OTHER = "Other"
 
 class BookFormat(Enum):
     PDF = "PDF"
     EPUB = "EPUB"
     MOBI = "MOBI"
     AZW3 = "AZW3"
+    TXT = "TXT"
 
 class UserRole(Enum):
-    CUSTOMER = "Покупатель"
-    AUTHOR = "Автор"
-    ADMIN = "Администратор"
+    CUSTOMER = "Customer"
+    AUTHOR = "Author"
+    ADMIN = "Admin"
 
-class User:
-    """Класс пользователя системы"""
-    
-    def __init__(self, user_id: int, username: str, email: str, role: UserRole):
-        self.user_id = user_id
-        self.username = username
-        self.email = email
-        self.role = role
-        self.registration_date = datetime.now()
-        self._purchased_books = []
-    
-    def purchase_book(self, book: 'DigitalBook') -> bool:
-        """Покупка книги пользователем"""
-        if book not in self._purchased_books:
-            self._purchased_books.append(book)
-            return True
-        return False
-    
-    def get_purchased_books(self) -> List['DigitalBook']:
-        """Получить список купленных книг"""
-        return self._purchased_books.copy()
-    
-    def __str__(self):
-        return f"User({self.username}, {self.role.value})"
+class OrderStatus(Enum):
+    PENDING = "Pending"
+    COMPLETED = "Completed"
+    CANCELLED = "Cancelled"
 
+# ========== EXCEPTIONS ==========
+class BookStoreError(Exception):
+    """Base exception for BookStore system"""
+    pass
+
+class ValidationError(BookStoreError):
+    """Validation failed"""
+    pass
+
+class BookNotAvailableError(BookStoreError):
+    """Book is not available"""
+    pass
+
+class InsufficientFundsError(BookStoreError):
+    """User has insufficient funds"""
+    pass
+
+class BookAlreadyPurchasedError(BookStoreError):
+    """User already purchased this book"""
+    pass
+
+class EmptyCartError(BookStoreError):
+    """Shopping cart is empty"""
+    pass
+
+class SerializationError(BookStoreError):
+    """Serialization/deserialization failed"""
+    pass
+
+# ========== SERIALIZATION INTERFACES ==========
+class Serializer(ABC):
+    """Serializer interface"""
+    
+    @abstractmethod
+    def serialize(self, obj: Any) -> bytes:
+        pass
+    
+    @abstractmethod
+    def deserialize(self, data: bytes) -> Any:
+        pass
+
+class JSONSerializer(Serializer):
+    """JSON serializer implementation"""
+    
+    def serialize(self, obj: Any) -> bytes:
+        try:
+            return json.dumps(obj, default=str, indent=2).encode('utf-8')
+        except Exception as e:
+            raise SerializationError(f"JSON serialization failed: {e}")
+    
+    def deserialize(self, data: bytes) -> Any:
+        try:
+            return json.loads(data.decode('utf-8'))
+        except Exception as e:
+            raise SerializationError(f"JSON deserialization failed: {e}")
+
+class XMLSerializer(Serializer):
+    """XML serializer implementation"""
+    
+    def serialize(self, obj: Any) -> bytes:
+        # Simplified - would need proper XML structure
+        try:
+            root = ET.Element("data")
+            root.text = str(obj)
+            return ET.tostring(root, encoding='utf-8')
+        except Exception as e:
+            raise SerializationError(f"XML serialization failed: {e}")
+    
+    def deserialize(self, data: bytes) -> Any:
+        try:
+            root = ET.fromstring(data.decode('utf-8'))
+            return root.text
+        except Exception as e:
+            raise SerializationError(f"XML deserialization failed: {e}")
+
+class PickleSerializer(Serializer):
+    """Pickle serializer implementation"""
+    
+    def serialize(self, obj: Any) -> bytes:
+        try:
+            return pickle.dumps(obj)
+        except Exception as e:
+            raise SerializationError(f"Pickle serialization failed: {e}")
+    
+    def deserialize(self, data: bytes) -> Any:
+        try:
+            return pickle.loads(data)
+        except Exception as e:
+            raise SerializationError(f"Pickle deserialization failed: {e}")
+
+# ========== UNIVERSAL SERIALIZER ==========
+class UniversalSerializer:
+    """Universal serializer that can use different formats"""
+    
+    def __init__(self, serializer: Serializer = None):
+        self.serializer = serializer or JSONSerializer()
+    
+    def save(self, obj: Any, filename: str) -> None:
+        """Save object to file"""
+        try:
+            data = self.serializer.serialize(obj)
+            with open(filename, 'wb') as f:
+                f.write(data)
+        except Exception as e:
+            raise SerializationError(f"Save failed: {e}")
+    
+    def load(self, filename: str) -> Any:
+        """Load object from file"""
+        try:
+            with open(filename, 'rb') as f:
+                data = f.read()
+            return self.serializer.deserialize(data)
+        except Exception as e:
+            raise SerializationError(f"Load failed: {e}")
+
+# ========== SERIALIZABLE BASE CLASS ==========
+class Serializable(ABC):
+    """Abstract base class for serializable objects"""
+    
+    @abstractmethod
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert object to dictionary"""
+        pass
+    
+    @classmethod
+    @abstractmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Serializable':
+        """Create object from dictionary"""
+        pass
+
+# ========== SERIALIZATION UTILS ==========
+class SerializationUtils:
+    """Utility class for serialization operations"""
+    
+    @staticmethod
+    def serialize_to_json(obj: Serializable, filename: str) -> None:
+        """Serialize object to JSON file"""
+        serializer = JSONSerializer()
+        universal = UniversalSerializer(serializer)
+        universal.save(obj.to_dict(), filename)
+    
+    @staticmethod
+    def deserialize_from_json(cls: type, filename: str) -> Serializable:
+        """Deserialize object from JSON file"""
+        serializer = JSONSerializer()
+        universal = UniversalSerializer(serializer)
+        data = universal.load(filename)
+        return cls.from_dict(data)
+    
+    @staticmethod
+    def serialize_to_xml(obj: Serializable, filename: str) -> None:
+        """Serialize object to XML file"""
+        # Implementation would depend on specific XML structure
+        pass
+    
+    @staticmethod
+    def serialize_to_pickle(obj: Serializable, filename: str) -> None:
+        """Serialize object using pickle"""
+        serializer = PickleSerializer()
+        universal = UniversalSerializer(serializer)
+        universal.save(obj, filename)
+
+# ========== BOOKSTORE SPECIFIC SERIALIZERS ==========
+class BookStoreJSONSerializer:
+    """BookStore specific JSON serializer"""
+    
+    @staticmethod
+    def to_dict(obj: Any) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        if hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+        return obj
+    
+    @staticmethod
+    def from_dict(cls: type, data: Dict[str, Any]) -> Any:
+        """Create from dictionary"""
+        if hasattr(cls, 'from_dict'):
+            return cls.from_dict(data)
+        return data
+    
+    @staticmethod
+    def to_json(obj: Any) -> str:
+        """Convert to JSON string"""
+        return json.dumps(BookStoreJSONSerializer.to_dict(obj), default=str, indent=2)
+    
+    @staticmethod
+    def from_json(cls: type, json_str: str) -> Any:
+        """Create from JSON string"""
+        data = json.loads(json_str)
+        return BookStoreJSONSerializer.from_dict(cls, data)
+    
+    @staticmethod
+    def save_json(obj: Any, filename: str) -> None:
+        """Save to JSON file"""
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(BookStoreJSONSerializer.to_json(obj))
+    
+    @staticmethod
+    def load_json(cls: type, filename: str) -> Any:
+        """Load from JSON file"""
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return BookStoreJSONSerializer.from_dict(cls, data)
+
+class BookStoreXMLSerializer:
+    """BookStore specific XML serializer"""
+    
+    @staticmethod
+    def to_xml_element(obj: Any, element_name: str = "object") -> ET.Element:
+        """Convert object to XML element"""
+        element = ET.Element(element_name)
+        
+        if hasattr(obj, 'to_dict'):
+            data = obj.to_dict()
+            for key, value in data.items():
+                child = ET.SubElement(element, str(key))
+                if isinstance(value, dict):
+                    # Recursively handle nested dictionaries
+                    child.append(BookStoreXMLSerializer.to_xml_element(value, "item"))
+                elif isinstance(value, list):
+                    # Handle lists
+                    list_elem = ET.SubElement(child, "list")
+                    for item in value:
+                        list_elem.append(BookStoreXMLSerializer.to_xml_element(item, "item"))
+                else:
+                    child.text = str(value)
+        else:
+            element.text = str(obj)
+        
+        return element
+    
+    @staticmethod
+    def from_xml_element(element: ET.Element) -> Dict[str, Any]:
+        """Create object from XML element"""
+        result = {}
+        
+        for child in element:
+            if len(child) > 0:
+                # Has children, recursively parse
+                if child.tag == "list":
+                    result[child.tag] = [
+                        BookStoreXMLSerializer.from_xml_element(item) 
+                        for item in child
+                    ]
+                else:
+                    result[child.tag] = BookStoreXMLSerializer.from_xml_element(child)
+            else:
+                result[child.tag] = child.text
+        
+        return result
+    
+    @staticmethod
+    def save_to_xml(obj: Any, filename: str, root_name: str = "root") -> None:
+        """Save object to XML file"""
+        root = BookStoreXMLSerializer.to_xml_element(obj, root_name)
+        tree = ET.ElementTree(root)
+        tree.write(filename, encoding='utf-8', xml_declaration=True)
+    
+    @staticmethod
+    def load_from_xml(filename: str) -> Dict[str, Any]:
+        """Load object from XML file"""
+        tree = ET.parse(filename)
+        root = tree.getroot()
+        return BookStoreXMLSerializer.from_xml_element(root)
+    
+    @staticmethod
+    def prettify(xml_filename: str) -> str:
+        """Return prettified XML string"""
+        dom = minidom.parse(xml_filename)
+        return dom.toprettyxml(indent="  ")
+
+# ========== DOMAIN CLASSES ==========
+@dataclass
+class User(Serializable):
+    """Base User class"""
+    id: str
+    username: str
+    email: str
+    role: UserRole = UserRole.CUSTOMER
+    created_at: datetime = field(default_factory=datetime.now)
+    balance: float = 0.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'username': self.username,
+            'email': self.email,
+            'role': self.role.value,
+            'created_at': self.created_at.isoformat(),
+            'balance': self.balance
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'User':
+        return cls(
+            id=data['id'],
+            username=data['username'],
+            email=data['email'],
+            role=UserRole(data['role']),
+            created_at=datetime.fromisoformat(data['created_at']),
+            balance=data['balance']
+        )
+
+@dataclass
 class Author(User):
-    """Класс автора книг"""
+    """Author class inherits from User"""
+    published_books: List[str] = field(default_factory=list)
+    biography: str = ""
     
-    def __init__(self, user_id: int, username: str, email: str, bio: str = ""):
-        super().__init__(user_id, username, email, UserRole.AUTHOR)
-        self.bio = bio
-        self._published_books = []
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data.update({
+            'published_books': self.published_books,
+            'biography': self.biography
+        })
+        return data
     
-    def publish_book(self, book: 'DigitalBook') -> bool:
-        """Публикация книги автором"""
-        if book not in self._published_books:
-            self._published_books.append(book)
-            book.add_author(self)
-            return True
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Author':
+        user_data = {k: v for k, v in data.items() if k not in ['published_books', 'biography']}
+        user = super().from_dict(user_data)
+        return cls(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            role=user.role,
+            created_at=user.created_at,
+            balance=user.balance,
+            published_books=data.get('published_books', []),
+            biography=data.get('biography', "")
+        )
+
+@dataclass
+class DigitalBook(Serializable):
+    """Digital Book class"""
+    id: str
+    title: str
+    author_id: str
+    author_name: str
+    genre: BookGenre
+    formats: List[BookFormat]
+    price: float
+    description: str = ""
+    publication_date: datetime = field(default_factory=datetime.now)
+    is_available: bool = True
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'title': self.title,
+            'author_id': self.author_id,
+            'author_name': self.author_name,
+            'genre': self.genre.value,
+            'formats': [f.value for f in self.formats],
+            'price': self.price,
+            'description': self.description,
+            'publication_date': self.publication_date.isoformat(),
+            'is_available': self.is_available
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'DigitalBook':
+        return cls(
+            id=data['id'],
+            title=data['title'],
+            author_id=data['author_id'],
+            author_name=data['author_name'],
+            genre=BookGenre(data['genre']),
+            formats=[BookFormat(f) for f in data['formats']],
+            price=data['price'],
+            description=data.get('description', ""),
+            publication_date=datetime.fromisoformat(data['publication_date']),
+            is_available=data.get('is_available', True)
+        )
+
+@dataclass
+class Review(Serializable):
+    """Book Review class"""
+    id: str
+    book_id: str
+    user_id: str
+    rating: int  # 1-5
+    comment: str
+    created_at: datetime = field(default_factory=datetime.now)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'book_id': self.book_id,
+            'user_id': self.user_id,
+            'rating': self.rating,
+            'comment': self.comment,
+            'created_at': self.created_at.isoformat()
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Review':
+        return cls(
+            id=data['id'],
+            book_id=data['book_id'],
+            user_id=data['user_id'],
+            rating=data['rating'],
+            comment=data['comment'],
+            created_at=datetime.fromisoformat(data['created_at'])
+        )
+
+@dataclass
+class ShoppingCart(Serializable):
+    """Shopping Cart class"""
+    user_id: str
+    items: List[Dict[str, Any]] = field(default_factory=list)  # List of {book_id, format, price}
+    
+    def add_item(self, book_id: str, book_format: BookFormat, price: float) -> None:
+        """Add item to cart"""
+        self.items.append({
+            'book_id': book_id,
+            'format': book_format.value,
+            'price': price
+        })
+    
+    def remove_item(self, book_id: str) -> bool:
+        """Remove item from cart"""
+        for i, item in enumerate(self.items):
+            if item['book_id'] == book_id:
+                self.items.pop(i)
+                return True
         return False
-    
-    def get_published_books(self) -> List['DigitalBook']:
-        """Получить список опубликованных книг"""
-        return self._published_books.copy()
-    
-    def __str__(self):
-        return f"Author({self.username}, books: {len(self._published_books)})"
-
-class DigitalBook:
-    """Класс цифровой книги"""
-    
-    def __init__(self, book_id: int, title: str, description: str, 
-                 price: float, genre: BookGenre, file_size: int):
-        self.book_id = book_id
-        self.title = title
-        self.description = description
-        self.price = price
-        self.genre = genre
-        self.file_size = file_size  # в мегабайтах
-        self.publication_date = datetime.now()
-        self._authors = []
-        self._formats = []
-        self._reviews = []
-        self.is_available = True
-    
-    def add_author(self, author: Author) -> None:
-        """Добавить автора книги"""
-        if author not in self._authors:
-            self._authors.append(author)
-    
-    def add_format(self, book_format: BookFormat) -> None:
-        """Добавить доступный формат книги"""
-        if book_format not in self._formats:
-            self._formats.append(book_format)
-    
-    def add_review(self, review: 'Review') -> None:
-        """Добавить отзыв к книге"""
-        self._reviews.append(review)
-    
-    def get_average_rating(self) -> float:
-        """Получить средний рейтинг книги"""
-        if not self._reviews:
-            return 0.0
-        return sum(review.rating for review in self._reviews) / len(self._reviews)
-    
-    def get_authors(self) -> List[Author]:
-        """Получить список авторов"""
-        return self._authors.copy()
-    
-    def get_available_formats(self) -> List[BookFormat]:
-        """Получить доступные форматы"""
-        return self._formats.copy()
-    
-    def get_reviews(self) -> List['Review']:
-        """Получить отзывы"""
-        return self._reviews.copy()
-    
-    def __str__(self):
-        return f"Book('{self.title}', {self.genre.value}, ${self.price})"
-
-class Review:
-    """Класс отзыва на книгу"""
-    
-    def __init__(self, review_id: int, user: User, book: DigitalBook, 
-                 rating: int, comment: str = ""):
-        self.review_id = review_id
-        self.user = user
-        self.book = book
-        self.rating = max(1, min(5, rating))  # Ограничение рейтинга от 1 до 5
-        self.comment = comment
-        self.created_at = datetime.now()
-        self.book.add_review(self)
-    
-    def __str__(self):
-        return f"Review({self.rating}/5 by {self.user.username})"
-
-class ShoppingCart:
-    """Класс корзины покупок"""
-    
-    def __init__(self, user: User):
-        self.user = user
-        self._items = {}  # book: quantity
-    
-    def add_item(self, book: DigitalBook, quantity: int = 1) -> None:
-        """Добавить книгу в корзину"""
-        if book.is_available:
-            self._items[book] = self._items.get(book, 0) + quantity
-    
-    def remove_item(self, book: DigitalBook, quantity: int = 1) -> None:
-        """Удалить книгу из корзины"""
-        if book in self._items:
-            self._items[book] -= quantity
-            if self._items[book] <= 0:
-                del self._items[book]
-    
-    def get_total_price(self) -> float:
-        """Получить общую стоимость товаров в корзине"""
-        return sum(book.price * quantity for book, quantity in self._items.items())
-    
-    def get_items(self) -> dict:
-        """Получить содержимое корзины"""
-        return self._items.copy()
     
     def clear(self) -> None:
-        """Очистить корзину"""
-        self._items.clear()
+        """Clear all items"""
+        self.items.clear()
     
-    def __str__(self):
-        return f"ShoppingCart({len(self._items)} items, total: ${self.get_total_price():.2f})"
+    def get_total(self) -> float:
+        """Calculate total price"""
+        return sum(item['price'] for item in self.items)
+    
+    def is_empty(self) -> bool:
+        """Check if cart is empty"""
+        return len(self.items) == 0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'user_id': self.user_id,
+            'items': self.items
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ShoppingCart':
+        cart = cls(user_id=data['user_id'])
+        cart.items = data.get('items', [])
+        return cart
 
-class Order:
-    """Класс заказа"""
+@dataclass
+class Order(Serializable):
+    """Order class"""
+    id: str
+    user_id: str
+    items: List[Dict[str, Any]]
+    total_amount: float
+    status: OrderStatus = OrderStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.now)
+    completed_at: Optional[datetime] = None
     
-    def __init__(self, order_id: int, user: User, cart: ShoppingCart):
-        self.order_id = order_id
-        self.user = user
-        self.order_date = datetime.now()
-        self.items = cart.get_items()
-        self.total_amount = cart.get_total_price()
-        self.status = "pending"  # pending, completed, cancelled
-        self._download_links = {}
+    def complete(self) -> None:
+        """Mark order as completed"""
+        self.status = OrderStatus.COMPLETED
+        self.completed_at = datetime.now()
     
-    def complete_order(self) -> None:
-        """Завершить заказ и предоставить ссылки для скачивания"""
-        if self.status == "pending":
-            self.status = "completed"
-            # Генерация ссылок для скачивания (в реальной системе это было бы сложнее)
-            for book in self.items:
-                self._download_links[book] = f"https://example.com/download/{book.book_id}"
-            
-            # Добавляем книги в коллекцию пользователя
-            for book, quantity in self.items.items():
-                for _ in range(quantity):
-                    self.user.purchase_book(book)
+    def cancel(self) -> None:
+        """Cancel order"""
+        self.status = OrderStatus.CANCELLED
     
-    def get_download_links(self) -> dict:
-        """Получить ссылки для скачивания"""
-        return self._download_links.copy()
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'items': self.items,
+            'total_amount': self.total_amount,
+            'status': self.status.value,
+            'created_at': self.created_at.isoformat(),
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None
+        }
     
-    def __str__(self):
-        return f"Order(#{self.order_id}, ${self.total_amount:.2f}, {self.status})"
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Order':
+        return cls(
+            id=data['id'],
+            user_id=data['user_id'],
+            items=data['items'],
+            total_amount=data['total_amount'],
+            status=OrderStatus(data['status']),
+            created_at=datetime.fromisoformat(data['created_at']),
+            completed_at=datetime.fromisoformat(data['completed_at']) if data.get('completed_at') else None
+        )
 
+@dataclass
 class BookStore:
-    """Класс книжного магазина"""
-    
-    def __init__(self, name: str):
-        self.name = name
-        self._books = []
-        self._users = []
-        self._orders = []
-        self._next_id = 1
+    """Main BookStore class"""
+    books: List[DigitalBook] = field(default_factory=list)
+    users: List[User] = field(default_factory=list)
+    orders: List[Order] = field(default_factory=list)
     
     def add_book(self, book: DigitalBook) -> None:
-        """Добавить книгу в магазин"""
-        if book not in self._books:
-            self._books.append(book)
+        """Add book to store"""
+        self.books.append(book)
     
-    def register_user(self, user: User) -> None:
-        """Зарегистрировать пользователя"""
-        if user not in self._users:
-            self._users.append(user)
+    def add_user(self, user: User) -> None:
+        """Add user to store"""
+        self.users.append(user)
     
-    def create_order(self, user: User, cart: ShoppingCart) -> Optional[Order]:
-        """Создать заказ"""
-        if cart.get_items():
-            order = Order(self._next_id, user, cart)
-            self._next_id += 1
-            self._orders.append(order)
-            cart.clear()
-            return order
+    def find_book(self, book_id: str) -> Optional[DigitalBook]:
+        """Find book by ID"""
+        for book in self.books:
+            if book.id == book_id:
+                return book
         return None
     
-    def find_books_by_genre(self, genre: BookGenre) -> List[DigitalBook]:
-        """Найти книги по жанру"""
-        return [book for book in self._books if book.genre == genre and book.is_available]
+    def find_user(self, user_id: str) -> Optional[User]:
+        """Find user by ID"""
+        for user in self.users:
+            if user.id == user_id:
+                return user
+        return None
     
-    def find_books_by_author(self, author: Author) -> List[DigitalBook]:
-        """Найти книги по автору"""
-        return [book for book in self._books if author in book.get_authors() and book.is_available]
-    
-    def get_available_books(self) -> List[DigitalBook]:
-        """Получить все доступные книги"""
-        return [book for book in self._books if book.is_available]
+    def purchase(self, user_id: str, cart: ShoppingCart) -> Order:
+        """Process purchase from shopping cart"""
+        if cart.is_empty():
+            raise EmptyCartError("Cannot purchase empty cart")
+        
+        user = self.find_user(user_id)
+        if not user:
+            raise ValidationError(f"User {user_id} not found")
+        
+        if user.balance < cart.get_total():
+            raise InsufficientFundsError(f"Insufficient funds. Balance: {user.balance}, Total: {cart.get_total()}")
+        
+        # Check if books are available
+        for item in cart.items:
+            book = self.find_book(item['book_id'])
+            if not book or not book.is_available:
+                raise BookNotAvailableError(f"Book {item['book_id']} is not available")
+        
+        # Create order
+        order = Order(
+            id=f"ORD-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            user_id=user_id,
+            items=cart.items.copy(),
+            total_amount=cart.get_total()
+        )
+        
+        # Process payment
+        user.balance -= order.total_amount
+        
+        # Update books availability if needed
+        for item in order.items:
+            book = self.find_book(item['book_id'])
+            if book:
+                book.is_available = False
+        
+        # Add order to store
+        self.orders.append(order)
+        
+        # Clear cart
+        cart.clear()
+        
+        return order
 
-# Пример использования системы
+# ========== USAGE EXAMPLE ==========
+def example_usage():
+    """Example of how to use the BookStore system"""
+    
+    # Create some users
+    author = Author(
+        id="auth-001",
+        username="jane_author",
+        email="jane@example.com",
+        role=UserRole.AUTHOR,
+        balance=100.0,
+        biography="Best-selling author"
+    )
+    
+    customer = User(
+        id="user-001",
+        username="john_doe",
+        email="john@example.com",
+        role=UserRole.CUSTOMER,
+        balance=50.0
+    )
+    
+    # Create books
+    book = DigitalBook(
+        id="book-001",
+        title="Python Programming",
+        author_id=author.id,
+        author_name=author.username,
+        genre=BookGenre.TECHNOLOGY,
+        formats=[BookFormat.PDF, BookFormat.EPUB],
+        price=29.99,
+        description="Learn Python programming"
+    )
+    
+    # Create bookstore
+    store = BookStore()
+    store.add_user(author)
+    store.add_user(customer)
+    store.add_book(book)
+    
+    # Create shopping cart
+    cart = ShoppingCart(user_id=customer.id)
+    cart.add_item(book.id, BookFormat.PDF, book.price)
+    
+    print(f"Cart total: ${cart.get_total():.2f}")
+    print(f"Customer balance: ${customer.balance:.2f}")
+    
+    # Try to purchase
+    try:
+        order = store.purchase(customer.id, cart)
+        print(f"Order created: {order.id}")
+        print(f"Order status: {order.status.value}")
+        print(f"Customer new balance: ${customer.balance:.2f}")
+    except BookStoreError as e:
+        print(f"Purchase failed: {e}")
+    
+    # Serialize to JSON
+    print("\n=== JSON Serialization ===")
+    json_str = BookStoreJSONSerializer.to_json(book)
+    print(f"Book as JSON:\n{json_str[:200]}...")
+    
+    # Save to file
+    BookStoreJSONSerializer.save_json(book, "book.json")
+    
+    # Load from file
+    loaded_book = BookStoreJSONSerializer.load_json(DigitalBook, "book.json")
+    print(f"\nLoaded book title: {loaded_book.title}")
+    
+    # Universal serializer
+    print("\n=== Universal Serializer ===")
+    serializer = UniversalSerializer(JSONSerializer())
+    serializer.save(customer, "customer.json")
+    
+    # XML Serialization
+    print("\n=== XML Serialization ===")
+    BookStoreXMLSerializer.save_to_xml(book, "book.xml", "digital_book")
+    pretty_xml = BookStoreXMLSerializer.prettify("book.xml")
+    print(f"XML preview:\n{pretty_xml[:300]}...")
+
 if __name__ == "__main__":
-    # Создание магазина
-    bookstore = BookStore("Цифровая библиотека")
-    
-    # Создание авторов
-    author1 = Author(1, "john_doe", "john@example.com", "Писатель-фантаст")
-    author2 = Author(2, "jane_smith", "jane@example.com", "Технический писатель")
-    
-    # Создание книг
-    book1 = DigitalBook(1, "Python Programming", "Изучение Python", 29.99, 
-                       BookGenre.TECHNOLOGY, 5)
-    book1.add_author(author1)
-    book1.add_format(BookFormat.PDF)
-    book1.add_format(BookFormat.EPUB)
-    
-    book2 = DigitalBook(2, "Space Odyssey", "Научная фантастика", 19.99, 
-                       BookGenre.FICTION, 3)
-    book2.add_author(author2)
-    book2.add_format(BookFormat.EPUB)
-    
-    # Добавление книг в магазин
-    bookstore.add_book(book1)
-    bookstore.add_book(book2)
-    
-    # Создание пользователя
-    user = User(3, "alice", "alice@example.com", UserRole.CUSTOMER)
-    bookstore.register_user(user)
-    
-    # Работа с корзиной
-    cart = ShoppingCart(user)
-    cart.add_item(book1)
-    cart.add_item(book2)
-    
-    print(f"Корзина: {cart}")
-    print(f"Общая стоимость: ${cart.get_total_price():.2f}")
-    
-    # Создание заказа
-    order = bookstore.create_order(user, cart)
-    if order:
-        order.complete_order()
-        print(f"Заказ: {order}")
-        print(f"Ссылки для скачивания: {order.get_download_links()}")
-    
-    # Проверка купленных книг
-    print(f"Купленные книги пользователя: {[book.title for book in user.get_purchased_books()]}")
+    example_usage()
