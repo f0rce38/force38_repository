@@ -1,0 +1,293 @@
+from datetime import datetime
+from enum import Enum
+from typing import List, Optional
+
+class BookGenre(Enum):
+    FICTION = "Художественная литература"
+    SCIENCE = "Научная литература"
+    BUSINESS = "Бизнес"
+    TECHNOLOGY = "Технологии"
+    SELF_HELP = "Саморазвитие"
+    EDUCATION = "Образование"
+
+class BookFormat(Enum):
+    PDF = "PDF"
+    EPUB = "EPUB"
+    MOBI = "MOBI"
+    AZW3 = "AZW3"
+
+class UserRole(Enum):
+    CUSTOMER = "Покупатель"
+    AUTHOR = "Автор"
+    ADMIN = "Администратор"
+
+class User:
+    """Класс пользователя системы"""
+    
+    def __init__(self, user_id: int, username: str, email: str, role: UserRole):
+        self.user_id = user_id
+        self.username = username
+        self.email = email
+        self.role = role
+        self.registration_date = datetime.now()
+        self._purchased_books = []
+    
+    def purchase_book(self, book: 'DigitalBook') -> bool:
+        """Покупка книги пользователем"""
+        if book not in self._purchased_books:
+            self._purchased_books.append(book)
+            return True
+        return False
+    
+    def get_purchased_books(self) -> List['DigitalBook']:
+        """Получить список купленных книг"""
+        return self._purchased_books.copy()
+    
+    def __str__(self):
+        return f"User({self.username}, {self.role.value})"
+
+class Author(User):
+    """Класс автора книг"""
+    
+    def __init__(self, user_id: int, username: str, email: str, bio: str = ""):
+        super().__init__(user_id, username, email, UserRole.AUTHOR)
+        self.bio = bio
+        self._published_books = []
+    
+    def publish_book(self, book: 'DigitalBook') -> bool:
+        """Публикация книги автором"""
+        if book not in self._published_books:
+            self._published_books.append(book)
+            book.add_author(self)
+            return True
+        return False
+    
+    def get_published_books(self) -> List['DigitalBook']:
+        """Получить список опубликованных книг"""
+        return self._published_books.copy()
+    
+    def __str__(self):
+        return f"Author({self.username}, books: {len(self._published_books)})"
+
+class DigitalBook:
+    """Класс цифровой книги"""
+    
+    def __init__(self, book_id: int, title: str, description: str, 
+                 price: float, genre: BookGenre, file_size: int):
+        self.book_id = book_id
+        self.title = title
+        self.description = description
+        self.price = price
+        self.genre = genre
+        self.file_size = file_size  # в мегабайтах
+        self.publication_date = datetime.now()
+        self._authors = []
+        self._formats = []
+        self._reviews = []
+        self.is_available = True
+    
+    def add_author(self, author: Author) -> None:
+        """Добавить автора книги"""
+        if author not in self._authors:
+            self._authors.append(author)
+    
+    def add_format(self, book_format: BookFormat) -> None:
+        """Добавить доступный формат книги"""
+        if book_format not in self._formats:
+            self._formats.append(book_format)
+    
+    def add_review(self, review: 'Review') -> None:
+        """Добавить отзыв к книге"""
+        self._reviews.append(review)
+    
+    def get_average_rating(self) -> float:
+        """Получить средний рейтинг книги"""
+        if not self._reviews:
+            return 0.0
+        return sum(review.rating for review in self._reviews) / len(self._reviews)
+    
+    def get_authors(self) -> List[Author]:
+        """Получить список авторов"""
+        return self._authors.copy()
+    
+    def get_available_formats(self) -> List[BookFormat]:
+        """Получить доступные форматы"""
+        return self._formats.copy()
+    
+    def get_reviews(self) -> List['Review']:
+        """Получить отзывы"""
+        return self._reviews.copy()
+    
+    def __str__(self):
+        return f"Book('{self.title}', {self.genre.value}, ${self.price})"
+
+class Review:
+    """Класс отзыва на книгу"""
+    
+    def __init__(self, review_id: int, user: User, book: DigitalBook, 
+                 rating: int, comment: str = ""):
+        self.review_id = review_id
+        self.user = user
+        self.book = book
+        self.rating = max(1, min(5, rating))  # Ограничение рейтинга от 1 до 5
+        self.comment = comment
+        self.created_at = datetime.now()
+        self.book.add_review(self)
+    
+    def __str__(self):
+        return f"Review({self.rating}/5 by {self.user.username})"
+
+class ShoppingCart:
+    """Класс корзины покупок"""
+    
+    def __init__(self, user: User):
+        self.user = user
+        self._items = {}  # book: quantity
+    
+    def add_item(self, book: DigitalBook, quantity: int = 1) -> None:
+        """Добавить книгу в корзину"""
+        if book.is_available:
+            self._items[book] = self._items.get(book, 0) + quantity
+    
+    def remove_item(self, book: DigitalBook, quantity: int = 1) -> None:
+        """Удалить книгу из корзины"""
+        if book in self._items:
+            self._items[book] -= quantity
+            if self._items[book] <= 0:
+                del self._items[book]
+    
+    def get_total_price(self) -> float:
+        """Получить общую стоимость товаров в корзине"""
+        return sum(book.price * quantity for book, quantity in self._items.items())
+    
+    def get_items(self) -> dict:
+        """Получить содержимое корзины"""
+        return self._items.copy()
+    
+    def clear(self) -> None:
+        """Очистить корзину"""
+        self._items.clear()
+    
+    def __str__(self):
+        return f"ShoppingCart({len(self._items)} items, total: ${self.get_total_price():.2f})"
+
+class Order:
+    """Класс заказа"""
+    
+    def __init__(self, order_id: int, user: User, cart: ShoppingCart):
+        self.order_id = order_id
+        self.user = user
+        self.order_date = datetime.now()
+        self.items = cart.get_items()
+        self.total_amount = cart.get_total_price()
+        self.status = "pending"  # pending, completed, cancelled
+        self._download_links = {}
+    
+    def complete_order(self) -> None:
+        """Завершить заказ и предоставить ссылки для скачивания"""
+        if self.status == "pending":
+            self.status = "completed"
+            # Генерация ссылок для скачивания (в реальной системе это было бы сложнее)
+            for book in self.items:
+                self._download_links[book] = f"https://example.com/download/{book.book_id}"
+            
+            # Добавляем книги в коллекцию пользователя
+            for book, quantity in self.items.items():
+                for _ in range(quantity):
+                    self.user.purchase_book(book)
+    
+    def get_download_links(self) -> dict:
+        """Получить ссылки для скачивания"""
+        return self._download_links.copy()
+    
+    def __str__(self):
+        return f"Order(#{self.order_id}, ${self.total_amount:.2f}, {self.status})"
+
+class BookStore:
+    """Класс книжного магазина"""
+    
+    def __init__(self, name: str):
+        self.name = name
+        self._books = []
+        self._users = []
+        self._orders = []
+        self._next_id = 1
+    
+    def add_book(self, book: DigitalBook) -> None:
+        """Добавить книгу в магазин"""
+        if book not in self._books:
+            self._books.append(book)
+    
+    def register_user(self, user: User) -> None:
+        """Зарегистрировать пользователя"""
+        if user not in self._users:
+            self._users.append(user)
+    
+    def create_order(self, user: User, cart: ShoppingCart) -> Optional[Order]:
+        """Создать заказ"""
+        if cart.get_items():
+            order = Order(self._next_id, user, cart)
+            self._next_id += 1
+            self._orders.append(order)
+            cart.clear()
+            return order
+        return None
+    
+    def find_books_by_genre(self, genre: BookGenre) -> List[DigitalBook]:
+        """Найти книги по жанру"""
+        return [book for book in self._books if book.genre == genre and book.is_available]
+    
+    def find_books_by_author(self, author: Author) -> List[DigitalBook]:
+        """Найти книги по автору"""
+        return [book for book in self._books if author in book.get_authors() and book.is_available]
+    
+    def get_available_books(self) -> List[DigitalBook]:
+        """Получить все доступные книги"""
+        return [book for book in self._books if book.is_available]
+
+# Пример использования системы
+if __name__ == "__main__":
+    # Создание магазина
+    bookstore = BookStore("Цифровая библиотека")
+    
+    # Создание авторов
+    author1 = Author(1, "john_doe", "john@example.com", "Писатель-фантаст")
+    author2 = Author(2, "jane_smith", "jane@example.com", "Технический писатель")
+    
+    # Создание книг
+    book1 = DigitalBook(1, "Python Programming", "Изучение Python", 29.99, 
+                       BookGenre.TECHNOLOGY, 5)
+    book1.add_author(author1)
+    book1.add_format(BookFormat.PDF)
+    book1.add_format(BookFormat.EPUB)
+    
+    book2 = DigitalBook(2, "Space Odyssey", "Научная фантастика", 19.99, 
+                       BookGenre.FICTION, 3)
+    book2.add_author(author2)
+    book2.add_format(BookFormat.EPUB)
+    
+    # Добавление книг в магазин
+    bookstore.add_book(book1)
+    bookstore.add_book(book2)
+    
+    # Создание пользователя
+    user = User(3, "alice", "alice@example.com", UserRole.CUSTOMER)
+    bookstore.register_user(user)
+    
+    # Работа с корзиной
+    cart = ShoppingCart(user)
+    cart.add_item(book1)
+    cart.add_item(book2)
+    
+    print(f"Корзина: {cart}")
+    print(f"Общая стоимость: ${cart.get_total_price():.2f}")
+    
+    # Создание заказа
+    order = bookstore.create_order(user, cart)
+    if order:
+        order.complete_order()
+        print(f"Заказ: {order}")
+        print(f"Ссылки для скачивания: {order.get_download_links()}")
+    
+    # Проверка купленных книг
+    print(f"Купленные книги пользователя: {[book.title for book in user.get_purchased_books()]}")
