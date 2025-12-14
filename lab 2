@@ -1,0 +1,314 @@
+import re
+import requests
+from urllib.parse import urlparse
+import argparse
+from typing import List, Tuple
+import sys
+
+
+class EmailValidator:
+    """Класс для валидации и поиска email-адресов"""
+
+    # Регулярное выражение для проверки email (RFC 5322 совместимое, но упрощенное для практического использования)
+    EMAIL_PATTERN = r'''
+        (?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+          # Локальная часть
+        (?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*      # Дополнительные части локального имени
+        |"                                        # ИЛИ локальная часть в кавычках
+        (?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]
+        |\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")      # Содержимое в кавычках
+        @                                        # Символ @
+        (?:[a-z0-9]                             # Доменное имя
+        (?:[a-z0-9-]*[a-z0-9])?                 
+        \.                                      # Точка
+        )+                                     
+        [a-z0-9]                                # TLD
+        (?:[a-z0-9-]*[a-z0-9])?                 # Дополнительные поддомены
+    '''
+
+    # Более строгое регулярное выражение для валидации отдельных email
+    STRICT_EMAIL_PATTERN = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+    # Регулярное выражение для поиска в тексте (менее строгое)
+    SIMPLE_EMAIL_PATTERN = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+
+    def __init__(self):
+        self.patterns = {
+            'strict': re.compile(self.STRICT_EMAIL_PATTERN),
+            'simple': re.compile(self.SIMPLE_EMAIL_PATTERN, re.IGNORECASE),
+            'extended': re.compile(self.EMAIL_PATTERN, re.VERBOSE | re.IGNORECASE)
+        }
+
+    def validate_email(self, email: str) -> Tuple[bool, str]:
+        """Проверяет, является ли строка корректным email-адресом"""
+        if not email:
+            return False, "Пустая строка"
+
+        email = email.strip()
+
+        # Проверка по строгому паттерну
+        if self.patterns['strict'].match(email):
+            return True, "Корректный email-адрес"
+        else:
+            return False, "Некорректный email-адрес"
+
+    def find_emails_in_text(self, text: str, pattern_type: str = 'simple') -> List[str]:
+        """Ищет все email-адреса в тексте"""
+        if not text:
+            return []
+
+        pattern = self.patterns.get(pattern_type, self.patterns['simple'])
+        return pattern.findall(text)
+
+    def extract_and_validate(self, text: str) -> List[dict]:
+        """Извлекает email-адреса из текста и проверяет их корректность"""
+        emails = self.find_emails_in_text(text, 'extended')
+        results = []
+
+        for email in set(emails):  # Используем set для удаления дубликатов
+            is_valid, message = self.validate_email(email)
+            results.append({
+                'email': email,
+                'valid': is_valid,
+                'message': message
+            })
+
+        return sorted(results, key=lambda x: x['email'])
+
+
+class EmailSearchApp:
+    """Основной класс приложения для поиска email"""
+
+    def __init__(self):
+        self.validator = EmailValidator()
+
+    def get_emails_from_url(self, url: str) -> List[dict]:
+        """Получает email-адреса с веб-страницы"""
+        try:
+            # Проверка URL
+            parsed_url = urlparse(url)
+            if not parsed_url.scheme:
+                url = 'http://' + url
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+
+            print(f"Загрузка страницы: {url}")
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            text = response.text
+            print(f"Загружено {len(text)} символов")
+
+            return self.validator.extract_and_validate(text)
+
+        except requests.exceptions.RequestException as e:
+            print(f"Ошибка при загрузке страницы: {e}")
+            return []
+
+    def get_emails_from_file(self, file_path: str) -> List[dict]:
+        """Получает email-адреса из файла"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+
+            print(f"Загружено {len(text)} символов из файла {file_path}")
+            return self.validator.extract_and_validate(text)
+
+        except FileNotFoundError:
+            print(f"Файл не найден: {file_path}")
+            return []
+        except Exception as e:
+            print(f"Ошибка при чтении файла: {e}")
+            return []
+
+    def process_user_input(self) -> None:
+        """Обрабатывает пользовательский ввод"""
+        print("\n" + "=" * 50)
+        print("ПРОВЕРКА И ПОИСК EMAIL-АДРЕСОВ")
+        print("=" * 50)
+
+        while True:
+            print("\nВыберите режим работы:")
+            print("1. Проверить отдельный email-адрес")
+            print("2. Ввести текст для поиска email")
+            print("3. Загрузить текст из файла")
+            print("4. Получить email с веб-страницы")
+            print("5. Тестовые примеры")
+            print("6. Выход")
+
+            choice = input("\nВаш выбор (1-6): ").strip()
+
+            if choice == '1':
+                self.mode_single_email()
+            elif choice == '2':
+                self.mode_text_input()
+            elif choice == '3':
+                self.mode_file_input()
+            elif choice == '4':
+                self.mode_url_input()
+            elif choice == '5':
+                self.run_test_examples()
+            elif choice == '6':
+                print("Выход из программы.")
+                break
+            else:
+                print("Некорректный выбор. Попробуйте снова.")
+
+    def mode_single_email(self) -> None:
+        """Режим проверки одного email-адреса"""
+        email = input("Введите email-адрес для проверки: ").strip()
+        is_valid, message = self.validator.validate_email(email)
+
+        status = "✓ ВАЛИДНЫЙ" if is_valid else "✗ НЕВАЛИДНЫЙ"
+        print(f"\nРезультат проверки: {status}")
+        print(f"Email: {email}")
+        print(f"Сообщение: {message}")
+
+        # Дополнительная информация
+        if is_valid:
+            local_part, domain = email.split('@')
+            print(f"Локальная часть: {local_part}")
+            print(f"Домен: {domain}")
+
+    def mode_text_input(self) -> None:
+        """Режим ввода текста для поиска email"""
+        print("Введите текст (завершите ввод строкой 'END' на отдельной строке):")
+        lines = []
+        while True:
+            line = input()
+            if line.strip() == 'END':
+                break
+            lines.append(line)
+
+        text = '\n'.join(lines)
+        self.display_results(self.validator.extract_and_validate(text))
+
+    def mode_file_input(self) -> None:
+        """Режим загрузки файла"""
+        file_path = input("Введите путь к файлу: ").strip()
+        self.display_results(self.get_emails_from_file(file_path))
+
+    def mode_url_input(self) -> None:
+        """Режим загрузки веб-страницы"""
+        url = input("Введите URL веб-страницы: ").strip()
+        self.display_results(self.get_emails_from_url(url))
+
+    def display_results(self, results: List[dict]) -> None:
+        """Отображает результаты поиска"""
+        if not results:
+            print("\nEmail-адреса не найдены.")
+            return
+
+        print(f"\nНайдено email-адресов: {len(results)}")
+        print("-" * 80)
+
+        valid_count = sum(1 for r in results if r['valid'])
+        invalid_count = len(results) - valid_count
+
+        print(f"Валидных: {valid_count}, Некорректных: {invalid_count}")
+        print("-" * 80)
+
+        for result in results:
+            status = "✓" if result['valid'] else "✗"
+            print(f"{status} {result['email']:40} - {result['message']}")
+
+        # Сохранение результатов в файл
+        save = input("\nСохранить результаты в файл? (y/n): ").lower()
+        if save == 'y':
+            filename = input("Введите имя файла (по умолчанию: emails.txt): ").strip()
+            if not filename:
+                filename = "emails.txt"
+
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write("Найденные email-адреса:\n")
+                    f.write("=" * 80 + "\n")
+                    for result in results:
+                        status = "VALID" if result['valid'] else "INVALID"
+                        f.write(f"{status}: {result['email']} - {result['message']}\n")
+
+                print(f"Результаты сохранены в файл {filename}")
+            except Exception as e:
+                print(f"Ошибка при сохранении файла: {e}")
+
+    def run_test_examples(self) -> None:
+        """Запускает тестовые примеры"""
+        test_cases = [
+            # Валидные email
+            ("user@example.com", True),
+            ("user.name@example.co.uk", True),
+            ("user-name@example.org", True),
+            ("user_name@example.io", True),
+            ("user+tag@example.com", True),
+            ("user123@example-domain.com", True),
+
+            # Невалидные email
+            ("userexample.com", False),  # нет @
+            ("user@example", False),  # нет точки в домене
+            ("user@.com", False),  # пустой домен
+            ("@example.com", False),  # пустая локальная часть
+            ("user@example..com", False),  # двойная точка
+            ("user@-example.com", False),  # дефис в начале домена
+            ("user@example.c", False),  # слишком короткий TLD
+            ("user name@example.com", False),  # пробел в email
+        ]
+
+        print("\n" + "=" * 80)
+        print("ТЕСТОВЫЕ ПРИМЕРЫ")
+        print("=" * 80)
+
+        for email, expected_valid in test_cases:
+            is_valid, message = self.validator.validate_email(email)
+            status = "✓ ПРОЙДЕН" if is_valid == expected_valid else "✗ ОШИБКА"
+            print(
+                f"{status:10} | {email:30} | Ожидалось: {'valid' if expected_valid else 'invalid':10} | Получено: {'valid' if is_valid else 'invalid':10}")
+
+        # Тест поиска в тексте
+        test_text = """
+        Контакты: admin@example.com, info@company.org, sales@test.co.uk
+        Некорректные: user@, @example.com, user@.com
+        Support: support@my-site.com, help@sub.domain.com
+        """
+
+        print("\n" + "=" * 80)
+        print("ПОИСК В ТЕКСТЕ:")
+        print("=" * 80)
+        print(test_text)
+
+        results = self.validator.extract_and_validate(test_text)
+        self.display_results(results)
+
+
+def main():
+    """Основная функция программы"""
+    parser = argparse.ArgumentParser(description='Поиск и проверка email-адресов')
+    parser.add_argument('--url', type=str, help='URL для поиска email')
+    parser.add_argument('--file', type=str, help='Файл для поиска email')
+    parser.add_argument('--email', type=str, help='Email для проверки')
+    parser.add_argument('--text', type=str, help='Текст для поиска email')
+
+    args = parser.parse_args()
+    app = EmailSearchApp()
+
+    # Если есть аргументы командной строки
+    if args.email:
+        is_valid, message = app.validator.validate_email(args.email)
+        status = "VALID" if is_valid else "INVALID"
+        print(f"{status}: {args.email} - {message}")
+    elif args.url:
+        results = app.get_emails_from_url(args.url)
+        app.display_results(results)
+    elif args.file:
+        results = app.get_emails_from_file(args.file)
+        app.display_results(results)
+    elif args.text:
+        results = app.validator.extract_and_validate(args.text)
+        app.display_results(results)
+    else:
+        # Интерактивный режим
+        app.process_user_input()
+
+
+if __name__ == "__main__":
+    main()
