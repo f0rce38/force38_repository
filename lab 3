@@ -1,0 +1,671 @@
+import pygame
+import sys
+import random
+from enum import Enum
+
+# Инициализация Pygame
+pygame.init()
+
+
+# Константы цветов
+class Colors:
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+    GREEN = (0, 200, 0)
+    RED = (255, 0, 0)
+    BLUE = (0, 120, 255)
+    GRAY = (100, 100, 100)
+    LIGHT_GRAY = (200, 200, 200)
+    DARK_GREEN = (0, 150, 0)
+    YELLOW = (255, 255, 0)
+
+
+# Состояния игры
+class GameState(Enum):
+    MENU = 1
+    PLAYING = 2
+    GAME_OVER = 3
+    SETTINGS = 4
+
+
+# Направления движения змейки
+class Direction(Enum):
+    UP = 1
+    DOWN = 2
+    LEFT = 3
+    RIGHT = 4
+
+
+# Класс для игры Змейка
+class SnakeGame:
+    def __init__(self, width=800, height=600):
+        # Основные настройки окна
+        self.width = width
+        self.height = height
+        self.cell_size = 20
+
+        # Рассчитываем размер игрового поля в клетках
+        self.grid_width = (width - 200) // self.cell_size
+        self.grid_height = height // self.cell_size
+
+        # Создаем окно
+        try:
+            self.screen = pygame.display.set_mode((self.width, self.height))
+            pygame.display.set_caption("Змейка")
+        except pygame.error as e:
+            print(f"Ошибка инициализации окна: {e}")
+            sys.exit(1)
+
+        # Шрифты
+        try:
+            self.title_font = pygame.font.SysFont('arial', 48, bold=True)
+            self.menu_font = pygame.font.SysFont('arial', 32)
+            self.game_font = pygame.font.SysFont('arial', 24)
+            self.small_font = pygame.font.SysFont('arial', 20)
+        except:
+            # Запасной вариант, если системные шрифты не доступны
+            self.title_font = pygame.font.Font(None, 48)
+            self.menu_font = pygame.font.Font(None, 32)
+            self.game_font = pygame.font.Font(None, 24)
+            self.small_font = pygame.font.Font(None, 20)
+
+        # Состояние игры
+        self.state = GameState.MENU
+
+        # Меню
+        self.menu_options = ["Играть", "Настройки", "Выход"]
+        self.selected_option = 0
+
+        # Настройки
+        self.settings_options = [
+            {"name": "Размер окна", "options": ["800x600", "1024x768", "1280x720"], "selected": 0},
+            {"name": "Скорость", "options": ["Медленно", "Нормально", "Быстро"], "selected": 1},
+            {"name": "Цвет змейки", "options": ["Зеленый", "Синий", "Красный"], "selected": 0},
+            {"name": "Назад", "options": []}
+        ]
+        self.selected_setting = 0
+
+        # Игровые переменные
+        self.snake = []
+        self.snake_color = Colors.GREEN
+        self.food = (0, 0)
+        self.direction = Direction.RIGHT
+        self.next_direction = Direction.RIGHT
+        self.score = 0
+        self.high_score = 0
+        self.speed = 10  # Количество кадров в секунду для обновления игры
+        self.clock = pygame.time.Clock()
+
+        # Инициализация игры
+        self.reset_game()
+
+        # Загрузка рекорда
+        self.load_high_score()
+
+    def reset_game(self):
+        """Сброс игры к начальному состоянию"""
+        # Начальная позиция змейки
+        start_x = self.grid_width // 2
+        start_y = self.grid_height // 2
+        self.snake = [(start_x, start_y), (start_x - 1, start_y), (start_x - 2, start_y)]
+
+        # Начальное направление
+        self.direction = Direction.RIGHT
+        self.next_direction = Direction.RIGHT
+
+        # Счет
+        self.score = 0
+
+        # Генерация еды
+        self.generate_food()
+
+    def generate_food(self):
+        """Генерация еды в случайном месте"""
+        while True:
+            food_x = random.randint(0, self.grid_width - 1)
+            food_y = random.randint(0, self.grid_height - 1)
+
+            # Проверяем, что еда не появилась на змейке
+            if (food_x, food_y) not in self.snake:
+                self.food = (food_x, food_y)
+                break
+
+    def change_direction(self, new_direction):
+        """Изменение направления движения змейки"""
+        # Не позволяем змейке развернуться на 180 градусов
+        if (new_direction == Direction.UP and self.direction != Direction.DOWN) or \
+                (new_direction == Direction.DOWN and self.direction != Direction.UP) or \
+                (new_direction == Direction.LEFT and self.direction != Direction.RIGHT) or \
+                (new_direction == Direction.RIGHT and self.direction != Direction.LEFT):
+            self.next_direction = new_direction
+
+    def update_snake(self):
+        """Обновление позиции змейки"""
+        # Обновляем направление
+        self.direction = self.next_direction
+
+        # Получаем текущую голову змейки
+        head_x, head_y = self.snake[0]
+
+        # Вычисляем новую позицию головы
+        if self.direction == Direction.UP:
+            new_head = (head_x, head_y - 1)
+        elif self.direction == Direction.DOWN:
+            new_head = (head_x, head_y + 1)
+        elif self.direction == Direction.LEFT:
+            new_head = (head_x - 1, head_y)
+        elif self.direction == Direction.RIGHT:
+            new_head = (head_x + 1, head_y)
+
+        # Проверяем столкновение со стенами
+        if (new_head[0] < 0 or new_head[0] >= self.grid_width or
+                new_head[1] < 0 or new_head[1] >= self.grid_height):
+            self.state = GameState.GAME_OVER
+            self.update_high_score()
+            return
+
+        # Проверяем столкновение с собой
+        if new_head in self.snake:
+            self.state = GameState.GAME_OVER
+            self.update_high_score()
+            return
+
+        # Добавляем новую голову
+        self.snake.insert(0, new_head)
+
+        # Проверяем, съела ли змейка еду
+        if new_head == self.food:
+            self.score += 10
+            self.generate_food()
+        else:
+            # Удаляем хвост, если еда не была съедена
+            self.snake.pop()
+
+    def update_high_score(self):
+        """Обновление рекорда"""
+        if self.score > self.high_score:
+            self.high_score = self.score
+            self.save_high_score()
+
+    def save_high_score(self):
+        """Сохранение рекорда в файл"""
+        try:
+            with open("snake_high_score.txt", "w") as f:
+                f.write(str(self.high_score))
+        except Exception as e:
+            print(f"Не удалось сохранить рекорд: {e}")
+
+    def load_high_score(self):
+        """Загрузка рекорда из файла"""
+        try:
+            with open("snake_high_score.txt", "r") as f:
+                self.high_score = int(f.read())
+        except (FileNotFoundError, ValueError):
+            self.high_score = 0
+
+    def draw_game(self):
+        """Отрисовка игрового поля"""
+        # Очищаем экран
+        self.screen.fill(Colors.BLACK)
+
+        # Рисуем игровое поле
+        game_field_rect = pygame.Rect(0, 0, self.grid_width * self.cell_size, self.height)
+        pygame.draw.rect(self.screen, (20, 20, 30), game_field_rect)
+
+        # Рисуем сетку
+        for x in range(0, self.grid_width * self.cell_size, self.cell_size):
+            pygame.draw.line(self.screen, (30, 30, 40), (x, 0), (x, self.height), 1)
+        for y in range(0, self.height, self.cell_size):
+            pygame.draw.line(self.screen, (30, 30, 40), (0, y), (self.grid_width * self.cell_size, y), 1)
+
+        # Рисуем змейку
+        for i, (x, y) in enumerate(self.snake):
+            color = self.snake_color
+            # Голова змейки другого цвета
+            if i == 0:
+                color = Colors.YELLOW
+
+            rect = pygame.Rect(
+                x * self.cell_size,
+                y * self.cell_size,
+                self.cell_size - 1,
+                self.cell_size - 1
+            )
+            pygame.draw.rect(self.screen, color, rect)
+
+            # Рисуем глаза на голове
+            if i == 0:
+                eye_size = self.cell_size // 5
+                # Левый глаз
+                if self.direction == Direction.RIGHT:
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.right - eye_size * 2, rect.top + eye_size * 2), eye_size)
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.right - eye_size * 2, rect.bottom - eye_size * 2), eye_size)
+                elif self.direction == Direction.LEFT:
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.left + eye_size * 2, rect.top + eye_size * 2), eye_size)
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.left + eye_size * 2, rect.bottom - eye_size * 2), eye_size)
+                elif self.direction == Direction.UP:
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.left + eye_size * 2, rect.top + eye_size * 2), eye_size)
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.right - eye_size * 2, rect.top + eye_size * 2), eye_size)
+                elif self.direction == Direction.DOWN:
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.left + eye_size * 2, rect.bottom - eye_size * 2), eye_size)
+                    pygame.draw.circle(self.screen, Colors.RED,
+                                       (rect.right - eye_size * 2, rect.bottom - eye_size * 2), eye_size)
+
+        # Рисуем еду
+        food_rect = pygame.Rect(
+            self.food[0] * self.cell_size,
+            self.food[1] * self.cell_size,
+            self.cell_size - 1,
+            self.cell_size - 1
+        )
+        pygame.draw.rect(self.screen, Colors.RED, food_rect)
+
+        # Рисуем боковую панель с информацией
+        panel_rect = pygame.Rect(
+            self.grid_width * self.cell_size, 0,
+            self.width - self.grid_width * self.cell_size, self.height
+        )
+        pygame.draw.rect(self.screen, (40, 40, 50), panel_rect)
+
+        # Отступ для текста
+        panel_x = self.grid_width * self.cell_size + 20
+
+        # Заголовок на панели
+        title_text = self.game_font.render("ЗМЕЙКА", True, Colors.YELLOW)
+        self.screen.blit(title_text, (panel_x, 30))
+
+        # Текущий счет
+        score_text = self.game_font.render(f"Счет: {self.score}", True, Colors.WHITE)
+        self.screen.blit(score_text, (panel_x, 100))
+
+        # Рекорд
+        high_score_text = self.game_font.render(f"Рекорд: {self.high_score}", True, Colors.WHITE)
+        self.screen.blit(high_score_text, (panel_x, 140))
+
+        # Длина змейки
+        length_text = self.game_font.render(f"Длина: {len(self.snake)}", True, Colors.WHITE)
+        self.screen.blit(length_text, (panel_x, 180))
+
+        # Управление
+        controls_y = 250
+        controls_title = self.small_font.render("Управление:", True, Colors.YELLOW)
+        self.screen.blit(controls_title, (panel_x, controls_y))
+
+        controls = [
+            "Стрелки - движение",
+            "P - Пауза",
+            "ESC - Меню",
+            "R - Перезапуск"
+        ]
+
+        for i, control in enumerate(controls):
+            control_text = self.small_font.render(control, True, Colors.LIGHT_GRAY)
+            self.screen.blit(control_text, (panel_x, controls_y + 30 + i * 25))
+
+    def draw_menu(self):
+        """Отрисовка меню"""
+        # Фон
+        self.screen.fill(Colors.BLACK)
+
+        # Заголовок
+        title_text = self.title_font.render("ЗМЕЙКА", True, Colors.GREEN)
+        title_rect = title_text.get_rect(center=(self.width // 2, 100))
+        self.screen.blit(title_text, title_rect)
+
+        # Варианты меню
+        for i, option in enumerate(self.menu_options):
+            color = Colors.YELLOW if i == self.selected_option else Colors.WHITE
+            option_text = self.menu_font.render(option, True, color)
+            option_rect = option_text.get_rect(center=(self.width // 2, 250 + i * 60))
+            self.screen.blit(option_text, option_rect)
+
+            # Подсветка выбранного варианта
+            if i == self.selected_option:
+                pygame.draw.rect(self.screen, Colors.GREEN,
+                                 (option_rect.x - 10, option_rect.y - 5,
+                                  option_rect.width + 20, option_rect.height + 10), 2)
+
+        # Подсказки
+        hint_text = self.small_font.render("Используйте стрелки и Enter для выбора", True, Colors.LIGHT_GRAY)
+        hint_rect = hint_text.get_rect(center=(self.width // 2, self.height - 50))
+        self.screen.blit(hint_text, hint_rect)
+
+    def draw_settings(self):
+        """Отрисовка экрана настроек"""
+        # Фон
+        self.screen.fill(Colors.BLACK)
+
+        # Заголовок
+        title_text = self.title_font.render("НАСТРОЙКИ", True, Colors.BLUE)
+        title_rect = title_text.get_rect(center=(self.width // 2, 80))
+        self.screen.blit(title_text, title_rect)
+
+        # Настройки
+        for i, setting in enumerate(self.settings_options):
+            # Название настройки
+            name_color = Colors.YELLOW if i == self.selected_setting else Colors.WHITE
+            name_text = self.menu_font.render(setting["name"], True, name_color)
+            name_rect = name_text.get_rect(midleft=(self.width // 4, 200 + i * 70))
+            self.screen.blit(name_text, name_rect)
+
+            # Подсветка выбранной настройки
+            if i == self.selected_setting:
+                pygame.draw.rect(self.screen, Colors.BLUE,
+                                 (name_rect.x - 10, name_rect.y - 5,
+                                  name_rect.width + 20, name_rect.height + 10), 2)
+
+            # Варианты для настройки (если есть)
+            if setting["options"]:
+                for j, option in enumerate(setting["options"]):
+                    option_color = Colors.GREEN if j == setting["selected"] else Colors.LIGHT_GRAY
+                    option_text = self.game_font.render(option, True, option_color)
+                    option_rect = option_text.get_rect(midleft=(self.width // 2 + j * 150, 200 + i * 70))
+
+                    # Подсветка выбранного варианта
+                    if j == setting["selected"]:
+                        pygame.draw.rect(self.screen, Colors.GREEN,
+                                         (option_rect.x - 5, option_rect.y - 3,
+                                          option_rect.width + 10, option_rect.height + 6), 2)
+
+                    self.screen.blit(option_text, option_rect)
+
+        # Подсказки
+        hint_text = self.small_font.render("Используйте стрелки, Enter для выбора, Esc для возврата", True,
+                                           Colors.LIGHT_GRAY)
+        hint_rect = hint_text.get_rect(center=(self.width // 2, self.height - 50))
+        self.screen.blit(hint_text, hint_rect)
+
+        # Предпросмотр змейки
+        preview_y = self.height - 150
+        preview_text = self.game_font.render("Предпросмотр:", True, Colors.WHITE)
+        self.screen.blit(preview_text, (self.width // 4, preview_y))
+
+        # Рисуем предпросмотр змейки
+        snake_color = self.get_snake_color()
+        for i in range(5):
+            rect = pygame.Rect(
+                self.width // 2 + i * 25,
+                preview_y,
+                20, 20
+            )
+            color = snake_color if i < 4 else Colors.YELLOW  # Голова другого цвета
+            pygame.draw.rect(self.screen, color, rect)
+
+        # Рисуем еду
+        food_rect = pygame.Rect(self.width // 2 + 150, preview_y, 20, 20)
+        pygame.draw.rect(self.screen, Colors.RED, food_rect)
+
+    def draw_game_over(self):
+        """Отрисовка экрана завершения игры"""
+        # Полупрозрачный overlay
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+
+        # Сообщение о завершении игры
+        game_over_text = self.title_font.render("ИГРА ОКОНЧЕНА", True, Colors.RED)
+        game_over_rect = game_over_text.get_rect(center=(self.width // 2, 150))
+        self.screen.blit(game_over_text, game_over_rect)
+
+        # Счет
+        score_text = self.menu_font.render(f"Ваш счет: {self.score}", True, Colors.YELLOW)
+        score_rect = score_text.get_rect(center=(self.width // 2, 230))
+        self.screen.blit(score_text, score_rect)
+
+        # Рекорд
+        high_score_text = self.menu_font.render(f"Рекорд: {self.high_score}", True, Colors.YELLOW)
+        high_score_rect = high_score_text.get_rect(center=(self.width // 2, 280))
+        self.screen.blit(high_score_text, high_score_rect)
+
+        # Варианты действий
+        options = ["Играть снова", "Меню", "Выход"]
+        for i, option in enumerate(options):
+            color = Colors.GREEN if i == 0 else Colors.WHITE
+            option_text = self.menu_font.render(option, True, color)
+            option_rect = option_text.get_rect(center=(self.width // 2, 350 + i * 60))
+            self.screen.blit(option_text, option_rect)
+
+        # Подсказки
+        hint_text = self.small_font.render("Нажмите 1, 2 или 3 для выбора действия", True, Colors.LIGHT_GRAY)
+        hint_rect = hint_text.get_rect(center=(self.width // 2, self.height - 50))
+        self.screen.blit(hint_text, hint_rect)
+
+    def get_snake_color(self):
+        """Получение цвета змейки в зависимости от выбора в настройках"""
+        color_option = self.settings_options[2]["selected"]
+        if color_option == 0:
+            return Colors.GREEN
+        elif color_option == 1:
+            return Colors.BLUE
+        elif color_option == 2:
+            return Colors.RED
+        return Colors.GREEN
+
+    def apply_settings(self):
+        """Применение настроек"""
+        # Применяем цвет змейки
+        self.snake_color = self.get_snake_color()
+
+        # Применяем скорость
+        speed_option = self.settings_options[1]["selected"]
+        if speed_option == 0:
+            self.speed = 8
+        elif speed_option == 1:
+            self.speed = 12
+        elif speed_option == 2:
+            self.speed = 18
+
+    def change_window_size(self):
+        """Изменение размера окна"""
+        size_option = self.settings_options[0]["selected"]
+
+        if size_option == 0:
+            new_width, new_height = 800, 600
+        elif size_option == 1:
+            new_width, new_height = 1024, 768
+        elif size_option == 2:
+            new_width, new_height = 1280, 720
+
+        # Меняем размер окна только если он изменился
+        if new_width != self.width or new_height != self.height:
+            self.width = new_width
+            self.height = new_height
+
+            # Пересчитываем размер игрового поля
+            self.grid_width = (self.width - 200) // self.cell_size
+            self.grid_height = self.height // self.cell_size
+
+            # Пытаемся изменить размер окна
+            try:
+                self.screen = pygame.display.set_mode((self.width, self.height))
+                self.reset_game()
+            except pygame.error as e:
+                print(f"Ошибка изменения размера окна: {e}")
+
+    def handle_menu_input(self, event):
+        """Обработка ввода в меню"""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                self.selected_option = (self.selected_option - 1) % len(self.menu_options)
+            elif event.key == pygame.K_DOWN:
+                self.selected_option = (self.selected_option + 1) % len(self.menu_options)
+            elif event.key == pygame.K_RETURN:
+                if self.selected_option == 0:  # Играть
+                    self.state = GameState.PLAYING
+                    self.reset_game()
+                elif self.selected_option == 1:  # Настройки
+                    self.state = GameState.SETTINGS
+                elif self.selected_option == 2:  # Выход
+                    pygame.quit()
+                    sys.exit()
+
+    def handle_settings_input(self, event):
+        """Обработка ввода в настройках"""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                self.selected_setting = (self.selected_setting - 1) % len(self.settings_options)
+            elif event.key == pygame.K_DOWN:
+                self.selected_setting = (self.selected_setting + 1) % len(self.settings_options)
+            elif event.key == pygame.K_LEFT:
+                # Переключение вариантов настройки влево
+                current_setting = self.settings_options[self.selected_setting]
+                if current_setting["options"]:
+                    current_setting["selected"] = (current_setting["selected"] - 1) % len(current_setting["options"])
+                    self.apply_settings()
+                    # Если изменили размер окна, применяем его
+                    if self.selected_setting == 0:
+                        self.change_window_size()
+            elif event.key == pygame.K_RIGHT:
+                # Переключение вариантов настройки вправо
+                current_setting = self.settings_options[self.selected_setting]
+                if current_setting["options"]:
+                    current_setting["selected"] = (current_setting["selected"] + 1) % len(current_setting["options"])
+                    self.apply_settings()
+                    # Если изменили размер окна, применяем его
+                    if self.selected_setting == 0:
+                        self.change_window_size()
+            elif event.key == pygame.K_RETURN:
+                # Если выбрали "Назад"
+                if self.settings_options[self.selected_setting]["name"] == "Назад":
+                    self.state = GameState.MENU
+            elif event.key == pygame.K_ESCAPE:
+                self.state = GameState.MENU
+
+    def handle_game_input(self, event):
+        """Обработка ввода в игре"""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_UP:
+                self.change_direction(Direction.UP)
+            elif event.key == pygame.K_DOWN:
+                self.change_direction(Direction.DOWN)
+            elif event.key == pygame.K_LEFT:
+                self.change_direction(Direction.LEFT)
+            elif event.key == pygame.K_RIGHT:
+                self.change_direction(Direction.RIGHT)
+            elif event.key == pygame.K_ESCAPE:
+                self.state = GameState.MENU
+            elif event.key == pygame.K_p:
+                # Пауза
+                self.show_pause_screen()
+            elif event.key == pygame.K_r:
+                # Перезапуск
+                self.reset_game()
+
+    def handle_game_over_input(self, event):
+        """Обработка ввода на экране завершения игры"""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                # Играть снова
+                self.state = GameState.PLAYING
+                self.reset_game()
+            elif event.key == pygame.K_2:
+                # Вернуться в меню
+                self.state = GameState.MENU
+            elif event.key == pygame.K_3:
+                # Выход
+                pygame.quit()
+                sys.exit()
+
+    def show_pause_screen(self):
+        """Отображение экрана паузы"""
+        # Полупрозрачный overlay
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 150))
+        self.screen.blit(overlay, (0, 0))
+
+        # Сообщение о паузе
+        pause_text = self.title_font.render("ПАУЗА", True, Colors.YELLOW)
+        pause_rect = pause_text.get_rect(center=(self.width // 2, self.height // 2 - 50))
+        self.screen.blit(pause_text, pause_rect)
+
+        # Подсказка
+        hint_text = self.menu_font.render("Нажмите P для продолжения", True, Colors.WHITE)
+        hint_rect = hint_text.get_rect(center=(self.width // 2, self.height // 2 + 50))
+        self.screen.blit(hint_text, hint_rect)
+
+        pygame.display.flip()
+
+        # Ожидание нажатия P для продолжения
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_p:
+                    waiting = False
+
+    def run(self):
+        """Основной игровой цикл"""
+        running = True
+
+        while running:
+            try:
+                # Обработка событий
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+
+                    # Обработка ввода в зависимости от состояния игры
+                    if self.state == GameState.MENU:
+                        self.handle_menu_input(event)
+                    elif self.state == GameState.SETTINGS:
+                        self.handle_settings_input(event)
+                    elif self.state == GameState.PLAYING:
+                        self.handle_game_input(event)
+                    elif self.state == GameState.GAME_OVER:
+                        self.handle_game_over_input(event)
+
+                # Обновление игры
+                if self.state == GameState.PLAYING:
+                    self.update_snake()
+
+                # Отрисовка в зависимости от состояния игры
+                if self.state == GameState.MENU:
+                    self.draw_menu()
+                elif self.state == GameState.SETTINGS:
+                    self.draw_settings()
+                elif self.state == GameState.PLAYING:
+                    self.draw_game()
+                elif self.state == GameState.GAME_OVER:
+                    self.draw_game()
+                    self.draw_game_over()
+
+                # Обновление экрана
+                pygame.display.flip()
+
+                # Управление скоростью обновления
+                if self.state == GameState.PLAYING:
+                    self.clock.tick(self.speed)
+                else:
+                    self.clock.tick(30)  # Меньшая частота кадров для меню
+
+            except Exception as e:
+                # Обработка исключений для предотвращения выхода из программы
+                print(f"Произошла ошибка: {e}")
+                # Показываем сообщение об ошибке
+                error_font = pygame.font.Font(None, 36)
+                error_text = error_font.render("Произошла ошибка, игра продолжается", True, Colors.RED)
+                self.screen.blit(error_text, (self.width // 2 - 200, self.height // 2))
+                pygame.display.flip()
+                pygame.time.delay(2000)  # Задержка для отображения сообщения
+
+        pygame.quit()
+        sys.exit()
+
+
+# Точка входа в программу
+if __name__ == "__main__":
+    try:
+        game = SnakeGame()
+        game.run()
+    except Exception as e:
+        print(f"Критическая ошибка при запуске игры: {e}")
+        input("Нажмите Enter для выхода...")
