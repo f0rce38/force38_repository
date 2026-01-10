@@ -1,0 +1,453 @@
+import logging
+import requests
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Ваш токен
+BOT_TOKEN = "8488829489:AAFPtTIg2ni_yin5nofjNjsycyS7QVm0HsU"
+
+
+class GameBot:
+    def __init__(self):
+        self.api_key = "c542e67aec3a4340908f9de9e86038af"
+        self.api_url = "https://api.rawg.io/api/games"
+
+        # Популярные игры для кнопок
+        self.popular_games = [
+            "Minecraft", "The Witcher 3", "GTA V", "Cyberpunk 2077",
+            "Elden Ring", "Red Dead Redemption 2", "Counter-Strike 2",
+            "Fortnite", "Valorant", "Dota 2", "League of Legends",
+            "Baldur's Gate 3", "Hogwarts Legacy", "Call of Duty"
+        ]
+
+        # Демо-данные
+        self.demo_data = {
+            'minecraft': {
+                'name': 'Minecraft',
+                'released': '2011',
+                'rating': '4.5/5',
+                'genres': 'Песочница, Выживание',
+                'description': 'Строительство и исследование в блоковом мире.'
+            },
+            'witcher': {
+                'name': 'The Witcher 3: Wild Hunt',
+                'released': '2015',
+                'rating': '4.9/5',
+                'genres': 'RPG, Фэнтези',
+                'description': 'Эпическая история ведьмака Геральта.'
+            },
+            'gta': {
+                'name': 'Grand Theft Auto V',
+                'released': '2013',
+                'rating': '4.7/5',
+                'genres': 'Экшен, Открытый мир',
+                'description': 'Криминальная сага в Лос-Сантосе.'
+            },
+            'cyberpunk': {
+                'name': 'Cyberpunk 2077',
+                'released': '2020',
+                'rating': '4.0/5',
+                'genres': 'RPG, Киборгпанк',
+                'description': 'Приключения в футуристическом Найт-Сити.'
+            }
+        }
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /start с кнопками"""
+        user = update.effective_user
+
+        # Создаем клавиатуру с кнопками
+        keyboard = [
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')],
+            [InlineKeyboardButton("🔍 Поиск игры", callback_data='search')],
+            [InlineKeyboardButton("ℹ️ Помощь", callback_data='help')],
+            [
+                InlineKeyboardButton("Minecraft", callback_data='game_minecraft'),
+                InlineKeyboardButton("Witcher 3", callback_data='game_witcher')
+            ],
+            [
+                InlineKeyboardButton("GTA V", callback_data='game_gta'),
+                InlineKeyboardButton("Cyberpunk", callback_data='game_cyberpunk')
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"🎮 <b>Привет, {user.first_name}!</b>\n\n"
+            "Я - бот для поиска информации об играх.\n\n"
+            "Выберите действие или напишите название игры:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /help"""
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')],
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            "📚 <b>Справка:</b>\n\n"
+            "🎮 <b>Как использовать:</b>\n"
+            "1. Используйте кнопки для быстрого выбора\n"
+            "2. Или напишите название игры в чат\n\n"
+            "⚙️ <b>Команды:</b>\n"
+            "/start - Главное меню\n"
+            "/help - Эта справка\n"
+            "/search - Поиск игры\n\n"
+            "📱 <b>Кнопки:</b>\n"
+            "• Популярные игры - топ игр\n"
+            "• Поиск игры - ввести название\n"
+            "• Кнопки с играми - быстрый доступ",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда /search"""
+        if not context.args:
+            await update.message.reply_text(
+                "🔍 <b>Введите название игры после команды:</b>\n"
+                "Пример: /search Minecraft",
+                parse_mode='HTML'
+            )
+            return
+
+        game_name = ' '.join(context.args)
+        await self.search_game(update, game_name)
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка текстовых сообщений"""
+        # Игнорируем команды
+        if update.message.text.startswith('/'):
+            return
+
+        game_name = update.message.text
+        await self.search_game(update, game_name)
+
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка нажатий на кнопки"""
+        query = update.callback_query
+        await query.answer()
+
+        data = query.data
+
+        if data == 'main_menu':
+            await self.show_main_menu(query)
+        elif data == 'popular':
+            await self.show_popular_games(query)
+        elif data == 'search':
+            await query.edit_message_text(
+                "🔍 <b>Введите название игры:</b>\n\n"
+                "Примеры:\n"
+                "• Minecraft\n"
+                "• The Witcher 3\n"
+                "• GTA V",
+                parse_mode='HTML'
+            )
+        elif data == 'help':
+            await self.show_help(query)
+        elif data.startswith('game_'):
+            game_key = data.split('_')[1]
+            await self.show_game_info(query, game_key)
+        elif data.startswith('select_'):
+            game_name = data.split('_', 1)[1]
+            await self.search_game_callback(query, game_name)
+
+    async def show_main_menu(self, query):
+        """Показать главное меню"""
+        keyboard = [
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')],
+            [InlineKeyboardButton("🔍 Поиск игры", callback_data='search')],
+            [InlineKeyboardButton("ℹ️ Помощь", callback_data='help')],
+            [
+                InlineKeyboardButton("Minecraft", callback_data='game_minecraft'),
+                InlineKeyboardButton("Witcher 3", callback_data='game_witcher')
+            ],
+            [
+                InlineKeyboardButton("GTA V", callback_data='game_gta'),
+                InlineKeyboardButton("Cyberpunk", callback_data='game_cyberpunk')
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            "🏠 <b>Главное меню</b>\n\n"
+            "Выберите действие или напишите название игры:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def show_popular_games(self, query):
+        """Показать список популярных игр"""
+        # Создаем кнопки для популярных игр (по 2 в строке)
+        keyboard = []
+        row = []
+        for i, game in enumerate(self.popular_games[:12], 1):
+            row.append(InlineKeyboardButton(game, callback_data=f'select_{game}'))
+            if i % 2 == 0:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            "🏆 <b>Популярные игры:</b>\n\n"
+            "Выберите игру из списка:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def show_help(self, query):
+        """Показать справку"""
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')],
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            "📚 <b>Справка:</b>\n\n"
+            "🎮 <b>Как использовать:</b>\n"
+            "1. Используйте кнопки для быстрого выбора\n"
+            "2. Или напишите название игры в чат\n\n"
+            "⚙️ <b>Команды:</b>\n"
+            "/start - Главное меню\n"
+            "/help - Эта справка\n"
+            "/search - Поиск игры\n\n"
+            "📱 <b>Кнопки:</b>\n"
+            "• Популярные игры - топ игр\n"
+            "• Поиск игры - ввести название\n"
+            "• Кнопки с играми - быстрый доступ",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def show_game_info(self, query, game_key):
+        """Показать информацию об игре по ключу"""
+        if game_key in self.demo_data:
+            game = self.demo_data[game_key]
+            response = (
+                f"🎮 <b>{game['name']}</b>\n\n"
+                f"📅 <b>Год выхода:</b> {game['released']}\n"
+                f"⭐ <b>Рейтинг:</b> {game['rating']}\n"
+                f"🎭 <b>Жанры:</b> {game['genres']}\n"
+                f"📝 <b>Описание:</b> {game['description']}"
+            )
+        else:
+            response = "Информация об игре не найдена."
+
+        keyboard = [
+            [InlineKeyboardButton("🔍 Поиск другой игры", callback_data='search')],
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            response,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def search_game_callback(self, query, game_name):
+        """Поиск игры из callback"""
+        await query.edit_message_text(f"🔍 Ищу информацию об игре: <b>{game_name}</b>...", parse_mode='HTML')
+
+        # Пробуем получить данные из API
+        api_data = await self.get_api_game_info(game_name)
+
+        if api_data:
+            response = self.format_api_response(api_data)
+        else:
+            # Используем демо-данные
+            response = self.get_demo_response(game_name)
+
+        keyboard = [
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')],
+            [InlineKeyboardButton("🔍 Новый поиск", callback_data='search')],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            response,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def search_game(self, update, game_name):
+        """Основной поиск игры"""
+        if hasattr(update, 'message'):
+            await update.message.reply_text(f"🔍 Ищу информацию об игре: <b>{game_name}</b>...", parse_mode='HTML')
+            message_func = update.message.reply_text
+        else:
+            await update.edit_message_text(f"🔍 Ищу информацию об игре: <b>{game_name}</b>...", parse_mode='HTML')
+            message_func = update.edit_message_text
+
+        # Пробуем получить данные из API
+        api_data = await self.get_api_game_info(game_name)
+
+        if api_data:
+            response = self.format_api_response(api_data)
+        else:
+            # Используем демо-данные
+            response = self.get_demo_response(game_name)
+
+        keyboard = [
+            [InlineKeyboardButton("🎮 Популярные игры", callback_data='popular')],
+            [InlineKeyboardButton("🔍 Новый поиск", callback_data='search')],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data='main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await message_func(
+            response,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+    async def get_api_game_info(self, game_name: str):
+        """Получение данных из API"""
+        try:
+            params = {
+                'key': self.api_key,
+                'search': game_name,
+                'page_size': 1
+            }
+
+            response = requests.get(self.api_url, params=params, timeout=5)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data['results']:
+                    return data['results'][0]
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"API error: {e}")
+            return None
+
+    def format_api_response(self, game_data: dict) -> str:
+        """Форматирование ответа из API"""
+        name = game_data.get('name', 'Неизвестно')
+        released = game_data.get('released', 'Неизвестно')
+        rating = game_data.get('rating', 'Н/Д')
+
+        # Жанры
+        genres = ', '.join([g['name'] for g in game_data.get('genres', [])[:3]]) or 'Не указаны'
+
+        # Платформы
+        platforms = ', '.join([p['platform']['name'] for p in game_data.get('platforms', [])[:3]]) or 'Не указаны'
+
+        # Описание
+        description = game_data.get('description_raw', '')[:200]
+        if len(description) > 200:
+            description = description[:200] + '...'
+
+        response = (
+            f"🎮 <b>{name}</b>\n\n"
+            f"📅 <b>Дата выхода:</b> {released}\n"
+            f"⭐ <b>Рейтинг:</b> {rating}/5\n"
+            f"🎭 <b>Жанры:</b> {genres}\n"
+            f"🖥️ <b>Платформы:</b> {platforms}\n"
+        )
+
+        if description:
+            response += f"\n📝 <b>Описание:</b>\n{description}"
+
+        return response
+
+    def get_demo_response(self, game_name: str) -> str:
+        """Получение демо-ответа"""
+        game_name_lower = game_name.lower()
+
+        # Ищем в демо-данных
+        for key, game_info in self.demo_data.items():
+            if key in game_name_lower:
+                return (
+                    f"🎮 <b>{game_info['name']}</b>\n\n"
+                    f"📅 <b>Год выхода:</b> {game_info['released']}\n"
+                    f"⭐ <b>Рейтинг:</b> {game_info['rating']}\n"
+                    f"🎭 <b>Жанры:</b> {game_info['genres']}\n"
+                    f"📝 <b>Описание:</b> {game_info['description']}\n\n"
+                    f"<i>ℹ️ Демо-информация. Для получения актуальных данных подключите API.</i>"
+                )
+
+        # Если игра не найдена
+        return (
+            f"🔍 <b>{game_name}</b>\n\n"
+            "К сожалению, я не нашел подробной информации об этой игре.\n\n"
+            "🎮 <b>Попробуйте:</b>\n"
+            "• Использовать кнопки популярных игр\n"
+            "• Проверить правильность названия\n"
+            "• Попробовать английское название"
+        )
+
+
+def main():
+    """Запуск бота"""
+    print("=" * 50)
+    print("🤖 ЗАПУСК GAME BOT С КНОПКАМИ")
+    print(f"📱 Токен: {BOT_TOKEN[:10]}...")
+    print("=" * 50)
+
+    try:
+        # Создаем бота
+        bot = GameBot()
+
+        # Создаем приложение
+        app = Application.builder().token(BOT_TOKEN).build()
+
+        # Добавляем обработчики
+        app.add_handler(CommandHandler("start", bot.start))
+        app.add_handler(CommandHandler("help", bot.help_command))
+        app.add_handler(CommandHandler("search", bot.search_command))
+
+        # Обработчик кнопок
+        app.add_handler(CallbackQueryHandler(bot.button_handler))
+
+        # Обработчик текстовых сообщений
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+
+        # Запускаем
+        print("\n✅ Бот запущен!")
+        print("📱 Найдите бота в Telegram и нажмите /start")
+        print("🎮 Используйте кнопки для удобного поиска")
+        print("⏸️  Ctrl+C для остановки")
+        print("=" * 50)
+
+        app.run_polling()
+
+    except Exception as e:
+        print(f"\n❌ Ошибка: {e}")
+        print("\n🔧 Проверьте:")
+        print("1. Правильность токена")
+        print("2. Наличие интернета")
+        print("3. Установлены ли библиотеки:")
+        print("   pip install python-telegram-bot requests")
+
+
+if __name__ == "__main__":
+    # Проверка зависимостей
+    try:
+        import telegram
+        import requests
+    except ImportError:
+        print("Установите зависимости: pip install python-telegram-bot requests")
+        exit(1)
+
+    main()
