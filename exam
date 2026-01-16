@@ -1,0 +1,124 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+def calculate_compound_interest():
+    try:
+        # Получаем данные из полей ввода
+        principal = float(principal_entry.get())
+        annual_rate = float(rate_entry.get())
+        years = float(years_entry.get())
+        compound_per_year = int(compound_var.get())
+        
+        # Проверка на корректность данных
+        if principal <= 0 or annual_rate <= 0 or years <= 0:
+            messagebox.showerror("Ошибка", "Все значения должны быть положительными числами!")
+            return
+        
+        # Рассчитываем сложные проценты
+        rate_decimal = annual_rate / 100
+        amount = principal * (1 + rate_decimal / compound_per_year) ** (compound_per_year * years)
+        interest = amount - principal
+        
+        # Форматируем результат
+        result_text = f"Итоговая сумма: {amount:,.2f} ₽\n"
+        result_text += f"Начисленные проценты: {interest:,.2f} ₽\n"
+        result_text += f"Начальная сумма: {principal:,.2f} ₽"
+        
+        # Выводим результат
+        result_label.config(text=result_text)
+        
+    except ValueError:
+        messagebox.showerror("Ошибка", "Пожалуйста, введите корректные числовые значения!")
+
+def clear_fields():
+    principal_entry.delete(0, tk.END)
+    rate_entry.delete(0, tk.END)
+    years_entry.delete(0, tk.END)
+    result_label.config(text="")
+    compound_var.set("1")
+
+# Создаем главное окно
+root = tk.Tk()
+root.title("Калькулятор сложных процентов")
+root.geometry("500x500")
+root.resizable(False, False)
+
+# Настраиваем стиль
+style = ttk.Style()
+style.theme_use('clam')
+
+# Создаем основной фрейм
+main_frame = ttk.Frame(root, padding="20")
+main_frame.pack(fill=tk.BOTH, expand=True)
+
+# Заголовок
+title_label = ttk.Label(main_frame, text="Калькулятор сложных процентов", 
+                        font=("Arial", 16, "bold"))
+title_label.pack(pady=(0, 20))
+
+# Фрейм для ввода данных
+input_frame = ttk.LabelFrame(main_frame, text="Введите данные", padding="15")
+input_frame.pack(fill=tk.X, pady=(0, 20))
+
+# Поле для основной суммы
+ttk.Label(input_frame, text="Основная сумма (₽):").grid(row=0, column=0, sticky=tk.W, pady=5)
+principal_entry = ttk.Entry(input_frame, width=25)
+principal_entry.grid(row=0, column=1, pady=5, padx=(10, 0))
+principal_entry.insert(0, "10000")
+
+# Поле для процентной ставки
+ttk.Label(input_frame, text="Годовая ставка (%):").grid(row=1, column=0, sticky=tk.W, pady=5)
+rate_entry = ttk.Entry(input_frame, width=25)
+rate_entry.grid(row=1, column=1, pady=5, padx=(10, 0))
+rate_entry.insert(0, "5")
+
+# Поле для срока
+ttk.Label(input_frame, text="Срок (лет):").grid(row=2, column=0, sticky=tk.W, pady=5)
+years_entry = ttk.Entry(input_frame, width=25)
+years_entry.grid(row=2, column=1, pady=5, padx=(10, 0))
+years_entry.insert(0, "10")
+
+# Выбор частоты начисления процентов
+ttk.Label(input_frame, text="Начисление в год:").grid(row=3, column=0, sticky=tk.W, pady=5)
+compound_var = tk.StringVar(value="1")
+compound_frame = ttk.Frame(input_frame)
+compound_frame.grid(row=3, column=1, sticky=tk.W, pady=5, padx=(10, 0))
+
+compound_options = [("Ежегодно", "1"), ("Ежеквартально", "4"), 
+                    ("Ежемесячно", "12"), ("Ежедневно", "365")]
+
+for i, (text, value) in enumerate(compound_options):
+    rb = ttk.Radiobutton(compound_frame, text=text, value=value, variable=compound_var)
+    rb.pack(side=tk.LEFT, padx=(0, 10))
+
+# Фрейм для кнопок
+button_frame = ttk.Frame(main_frame)
+button_frame.pack(pady=(0, 20))
+
+# Кнопки
+calculate_btn = ttk.Button(button_frame, text="Рассчитать", 
+                          command=calculate_compound_interest, width=15)
+calculate_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+clear_btn = ttk.Button(button_frame, text="Очистить", 
+                      command=clear_fields, width=15)
+clear_btn.pack(side=tk.LEFT)
+
+# Фрейм для результатов
+result_frame = ttk.LabelFrame(main_frame, text="Результаты", padding="15")
+result_frame.pack(fill=tk.BOTH, expand=True)
+
+result_label = ttk.Label(result_frame, text="", font=("Arial", 12),
+                        justify=tk.LEFT, relief=tk.SUNKEN, padding=10)
+result_label.pack(fill=tk.BOTH, expand=True)
+
+# Подсказка
+hint_label = ttk.Label(main_frame, 
+                       text="Формула: A = P(1 + r/n)^(nt)\n"
+                            "где A - итоговая сумма, P - основная сумма,\n"
+                            "r - годовая ставка, n - число начислений в год, t - срок в годах",
+                       font=("Arial", 9), foreground="gray", justify=tk.CENTER)
+hint_label.pack(pady=(10, 0))
+
+# Запускаем приложение
+root.mainloop()
